@@ -138,4 +138,109 @@ generate_nodes() {
     reload_process
     
     echo "========================================================"
-    echo "
+    echo "完成！请复制下方内容导入指纹浏览器:"
+    echo "========================================================"
+    cat $EXPORT_FILE
+    echo "========================================================"
+}
+
+# --- 6. 监控功能 ---
+action_monitor() {
+    while true; do
+        clear
+        echo "========================================================"
+        echo "   👁️  SOCKS5 实时连接监控 (每 2 秒刷新)"
+        echo "   按任意键返回主菜单..."
+        echo "========================================================"
+        printf "%-22s %-25s %s\n" "本地端口" "来源 IP" "状态"
+        echo "--------------------------------------------------------"
+        netstat -tnp 2>/dev/null | grep '3proxy' | grep 'ESTABLISHED' | awk '{printf "%-22s %-25s %s\n", $4, $5, $6}'
+        echo "--------------------------------------------------------"
+        read -t 2 -n 1 key
+        if [ $? -eq 0 ]; then break; fi
+    done
+}
+
+# --- 7. 菜单动作 ---
+action_add_new() {
+    # 安全检查：如果没有配置文件，先初始化
+    if [ ! -f "$CONF_FILE" ]; then init_config_header; fi
+    
+    LAST_PORT=$(grep "socks -p" $CONF_FILE | awk -F'p' '{print $2}' | sort -nr | head -n1)
+    if [ -z "$LAST_PORT" ]; then
+        echo "当前没有运行的端口，请选择【重置/新建】。"
+        return
+    fi
+    echo "当前最大占用端口: $LAST_PORT"
+    read -p "请输入要【新增】的节点数量: " ADD_COUNT
+    echo "模式: [1] 复用现有端口($LAST_PORT)  [2] 开启新端口(从 $(($LAST_PORT+1)) 开始)"
+    read -p "选择: " ADD_MODE
+    if [ "$ADD_MODE" == "1" ]; then
+        generate_nodes $ADD_COUNT $LAST_PORT 1 "true"
+    else
+        NEXT_PORT=$(($LAST_PORT + 1))
+        generate_nodes $ADD_COUNT $NEXT_PORT 2 "true"
+    fi
+}
+
+action_reset() {
+    echo "警告：这将删除所有现有节点配置！"
+    read -p "确认？(y/n): " CONFIRM
+    [ "$CONFIRM" != "y" ] && return
+    init_config_header
+    read -p "请输入节点数量: " R_COUNT
+    read -p "请输入起始端口: " R_PORT
+    echo "模式: [1] 单端口多用户  [2] 多端口多用户"
+    read -p "选择: " R_MODE
+    generate_nodes $R_COUNT $R_PORT $R_MODE "false"
+}
+
+action_clear() {
+    echo ">>> 正在清空所有配置..."
+    init_config_header
+    > $EXPORT_FILE
+    reload_process
+    echo ">>> 所有节点已删除，进程已重置。"
+}
+
+action_uninstall() {
+    echo ">>> 正在彻底卸载..."
+    tmux kill-session -t socksproxyd 2>/dev/null
+    pkill 3proxy
+    rm -rf $PATH_CONF $PATH_BIN $EXPORT_FILE $SHORTCUT_PATH
+    echo ">>> 卸载完成。"
+    exit 0
+}
+
+# --- 8. 主菜单 ---
+show_menu() {
+    clear
+    echo "========================================================"
+    echo "   3Proxy Manager Pro (Cmd: socks)"
+    echo "========================================================"
+    echo " 1. 🔥 新增/追加节点"
+    echo " 2. 🔄 重置/新建节点 (无日志模式)"
+    echo " 3. 🧹 清空所有节点"
+    echo " 4. 🗑️ 彻底卸载"
+    echo " 5. 👁️ 实时连接监控"
+    echo " 0. 退出"
+    echo "========================================================"
+    read -p "请选择 [0-5]: " OPTION
+    
+    case $OPTION in
+        1) action_add_new; read -p "按回车继续..." ;;
+        2) action_reset; read -p "按回车继续..." ;;
+        3) action_clear; read -p "按回车继续..." ;;
+        4) action_uninstall ;;
+        5) action_monitor; show_menu ;;
+        0) exit 0 ;;
+        *) echo "无效选项"; sleep 1; show_menu ;;
+    esac
+}
+
+# --- 脚本入口 ---
+# 顺序执行：检查权限 -> 自我安装 -> 安装依赖 -> 显示菜单
+check_root
+install_self
+install_dependencies
+show_menu
