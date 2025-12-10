@@ -1,5 +1,100 @@
 #!/bin/bash
 # =========================================================
+# 3Proxy Auto Installer (Final Fix)
+# =========================================================
+
+# 1. 权限检查
+if [ "$(id -u)" != "0" ]; then
+    echo "Error: 请使用 root 权限运行此脚本 (sudo su)"
+    exit 1
+fi
+
+# 2. 自动获取公网 IP
+echo ">>> [1/5] 正在探测公网 IP..."
+PUB_IP=$(curl -s -4 ifconfig.me)
+if [ -z "$PUB_IP" ]; then
+    PUB_IP=$(curl -s -4 icanhazip.com)
+fi
+echo "当前 IP: $PUB_IP"
+
+# 3. 安装依赖 (强制非交互模式，防止卡住)
+echo ">>> [2/5] 安装系统依赖..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq -y
+apt-get install -y build-essential git tmux curl ufw net-tools >/dev/null 2>&1
+
+# 4. 编译 3Proxy
+echo ">>> [3/5] 编译 3Proxy..."
+rm -rf /tmp/3proxy
+git clone https://github.com/3proxy/3proxy.git /tmp/3proxy >/dev/null 2>&1
+cd /tmp/3proxy
+make -f Makefile.Linux >/dev/null 2>&1
+cp bin/3proxy /usr/bin/
+mkdir -p /etc/3proxy
+
+# 5. 交互配置 (直接读取输入)
+echo "------------------------------------------------"
+read -p "请输入节点数量 (例如 5): " COUNT
+read -p "请输入起始端口 (例如 20000): " START_PORT
+echo "模式选择: [1] 单端口多用户(推荐)  [2] 多端口多用户"
+read -p "请选择 [1/2]: " MODE
+echo "------------------------------------------------"
+
+# 6. 生成配置
+CONF="/etc/3proxy/3proxy.cfg"
+RESULT="/root/socks5_export.txt"
+
+cat > $CONF <<EOF
+nserver 8.8.8.8
+nserver 1.1.1.1
+nscache 65536
+timeouts 1 5 30 60 180 180 15 60
+daemon
+auth strong
+EOF
+
+> $RESULT
+
+echo ">>> [4/5] 生成 SOCKS5 配置..."
+for (( i=0; i<COUNT; i++ )); do
+    USER="u$(openssl rand -hex 2)"
+    PASS=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9')
+    
+    echo "users $USER:CL:$PASS" >> $CONF
+    echo "allow $USER" >> $CONF
+
+    if [ "$MODE" == "1" ]; then
+        REAL_PORT=$START_PORT
+    else
+        REAL_PORT=$(($START_PORT + $i))
+        echo "socks -p$REAL_PORT" >> $CONF
+        echo "flush" >> $CONF
+        ufw allow $REAL_PORT/tcp >/dev/null 2>&1
+        ufw allow $REAL_PORT/udp >/dev/null 2>&1
+    fi
+    
+    echo "${PUB_IP}:${REAL_PORT}:${USER}:${PASS}" >> $RESULT
+done
+
+if [ "$MODE" == "1" ]; then
+    echo "socks -p$START_PORT" >> $CONF
+    ufw allow $START_PORT/tcp >/dev/null 2>&1
+    ufw allow $START_PORT/udp >/dev/null 2>&1
+fi
+
+# 7. 启动 Tmux 守护
+echo ">>> [5/5] 启动进程守护..."
+tmux kill-session -t socksproxyd 2>/dev/null
+pkill 3proxy
+# 使用 while true 确保进程永生
+tmux new-session -d -s socksproxyd "while true; do /usr/bin/3proxy /etc/3proxy/3proxy.cfg; sleep 1; done"
+
+echo "========================================================"
+echo "安装成功！指纹浏览器导入格式如下 (已存入 /root/socks5_export.txt):"
+echo "========================================================"
+cat $RESULT
+echo "========================================================"#!/bin/bash
+# =========================================================
 # 3Proxy 指纹浏览器专用一键脚本 (Tmux版)
 # Author: Gemini for Crypto Trader
 # Output Format: IP:PORT:USER:PASS
@@ -108,3 +203,4 @@ cat $RESULT
 echo "========================================================"
 echo "数据已备份至: $RESULT"
 echo "Tmux 守护运行中: tmux attach -t socksproxyd"
+
