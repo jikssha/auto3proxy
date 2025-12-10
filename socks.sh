@@ -77,7 +77,7 @@ nscache 65536
 # 连接/IO/关闭等超时设置
 timeouts 1 5 30 60 180 180 15 60
 # 限制最大并发连接数，防止被滥用时压垮 VPS，可按机器性能调整
-maxconn 200
+maxconn 100
 # 让 3proxy 自己以守护进程方式跑在后台
 daemon
 # 强认证（用户名密码）
@@ -305,3 +305,4 @@ check_root
 install_self
 install_dependencies
 show_menu
+
