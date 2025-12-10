@@ -1,6 +1,6 @@
 #!/bin/bash
 # =========================================================
-# 3Proxy Manager Pro Plus (No-Log + Monitor)
+# 3Proxy Manager Pro Plus (Auto-Self-Fix)
 # Author: Gemini for Crypto Trader
 # =========================================================
 
@@ -10,20 +10,23 @@ PATH_CONF="/etc/3proxy"
 CONF_FILE="/etc/3proxy/3proxy.cfg"
 EXPORT_FILE="/root/socks5_export.txt"
 SHORTCUT_NAME="socks"
+# 你的仓库源文件地址 (用于自我下载)
+REPO_URL="https://raw.githubusercontent.com/jikssha/auto3proxy/main/socks.sh"
 
-# --- 1. 基础检查与快捷键安装 ---
+# --- 1. 基础检查与快捷键安装 (核心修复) ---
 install_shortcut() {
-    if [ ! -f "/usr/bin/$SHORTCUT_NAME" ]; then
-        echo ">>> 正在安装快捷指令 '$SHORTCUT_NAME'..."
-        cp "$0" "/usr/bin/$SHORTCUT_NAME"
+    # 无论当前是通过什么方式运行的，都强制从云端下载最新版作为快捷指令
+    # 这样可以避免管道运行($0)导致的文件丢失问题
+    
+    # 只有当快捷指令不存在，或者文件大小为0时才安装，或者强制覆盖
+    echo ">>> 正在安装/修复快捷指令 '$SHORTCUT_NAME'..."
+    
+    # 下载、去回车符、写入系统路径
+    if curl -fsSL "$REPO_URL" | tr -d '\r' > "/usr/bin/$SHORTCUT_NAME"; then
         chmod +x "/usr/bin/$SHORTCUT_NAME"
         echo ">>> 快捷指令安装成功！以后输入 '$SHORTCUT_NAME' 即可管理。"
-        sleep 1
     else
-        if ! cmp -s "$0" "/usr/bin/$SHORTCUT_NAME"; then
-            cp "$0" "/usr/bin/$SHORTCUT_NAME"
-            chmod +x "/usr/bin/$SHORTCUT_NAME"
-        fi
+        echo "Warning: 快捷指令安装失败 (网络问题?)，但不影响本次运行。"
     fi
 }
 
@@ -38,7 +41,7 @@ get_public_ip() {
 
 # --- 2. 核心安装逻辑 ---
 install_dependencies() {
-    # 检查是否安装了 net-tools (netstat需要)
+    # 检查网络工具
     if ! command -v netstat > /dev/null; then
         echo ">>> 安装网络工具包..."
         export DEBIAN_FRONTEND=noninteractive
@@ -65,7 +68,7 @@ install_dependencies() {
 }
 
 init_config_header() {
-    # Pro Plus: 这里加入了 log /dev/null 实现彻底无日志
+    # 强制无日志
     cat > $CONF_FILE <<EOF
 nserver 8.8.8.8
 nserver 1.1.1.1
@@ -83,7 +86,7 @@ reload_process() {
     tmux kill-session -t socksproxyd 2>/dev/null
     pkill 3proxy
     tmux new-session -d -s socksproxyd "while true; do $PATH_BIN $CONF_FILE; sleep 1; done"
-    echo ">>> 服务已重启，隐匿配置已生效。"
+    echo ">>> 服务已重启，配置已生效。"
 }
 
 # --- 4. 功能：生成节点 ---
@@ -140,7 +143,7 @@ generate_nodes() {
     echo "已保存至: $EXPORT_FILE"
 }
 
-# --- 5. 功能：实时监控 (新增) ---
+# --- 5. 功能：实时监控 ---
 action_monitor() {
     while true; do
         clear
@@ -148,26 +151,16 @@ action_monitor() {
         echo "   👁️  SOCKS5 实时连接监控 (每 2 秒刷新)"
         echo "   按任意键返回主菜单..."
         echo "========================================================"
-        printf "%-22s %-25s %s\n" "本地端口" "来源 IP (指纹浏览器)" "状态"
+        printf "%-22s %-25s %s\n" "本地端口" "来源 IP" "状态"
         echo "--------------------------------------------------------"
-        
-        # 过滤出 3proxy 相关的 ESTABLISHED 连接
-        # 显示格式：本地IP:端口  远程IP:端口  ESTABLISHED
         netstat -tnp 2>/dev/null | grep '3proxy' | grep 'ESTABLISHED' | awk '{printf "%-22s %-25s %s\n", $4, $5, $6}'
-        
         echo "--------------------------------------------------------"
-        echo "提示：如果列表为空，说明当前没有活跃流量。"
-        
-        # 等待2秒，如果用户按键则退出循环
         read -t 2 -n 1 key
-        if [ $? -eq 0 ]; then
-            break
-        fi
+        if [ $? -eq 0 ]; then break; fi
     done
 }
 
 # --- 6. 菜单动作 ---
-
 action_add_new() {
     LAST_PORT=$(grep "socks -p" $CONF_FILE | awk -F'p' '{print $2}' | sort -nr | head -n1)
     if [ -z "$LAST_PORT" ]; then
@@ -203,7 +196,7 @@ action_clear() {
     init_config_header
     > $EXPORT_FILE
     reload_process
-    echo ">>> 所有节点已删除，进程已重置 (空载状态)。"
+    echo ">>> 所有节点已删除，进程已重置。"
 }
 
 action_uninstall() {
@@ -225,17 +218,16 @@ show_menu() {
     echo " 2. 🔄 重置/新建节点 (无日志模式)"
     echo " 3. 🧹 清空所有节点"
     echo " 4. 🗑️ 彻底卸载"
-    echo " 5. 👁️ 实时连接监控 (看谁在连我)"
+    echo " 5. 👁️ 实时连接监控"
     echo " 0. 退出"
     echo "========================================================"
     read -p "请选择 [0-5]: " OPTION
-    
     case $OPTION in
         1) action_add_new; read -p "按回车继续..." ;;
         2) action_reset; read -p "按回车继续..." ;;
         3) action_clear; read -p "按回车继续..." ;;
         4) action_uninstall ;;
-        5) action_monitor; show_menu ;; # 监控退出后返回菜单
+        5) action_monitor; show_menu ;;
         0) exit 0 ;;
         *) echo "无效选项"; sleep 1; show_menu ;;
     esac
@@ -245,8 +237,4 @@ show_menu() {
 check_root
 install_shortcut
 install_dependencies
-if [ $# -gt 0 ]; then
-    echo "暂不支持参数模式"
-else
-    show_menu
-fi
+show_menu
