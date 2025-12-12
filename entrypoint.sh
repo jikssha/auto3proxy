@@ -1,91 +1,120 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
-exec 2>&1
-trap 'echo "ERROR: exit at line $LINENO"; exit 1' ERR
+set -e
 
-BIN="${BIN:-/usr/local/bin/3proxy}"
+#============================================================
+# 3proxy 智能启动脚本
+# 功能：智能端口选择、自动多用户生成、零配置启动
+#============================================================
 
-# ==== 可在容器后台用环境变量改 ====
-SOCKS_COUNT="${SOCKS_COUNT:-5}"                 # 默认 5 个节点/账号
-SOCKS_MODE="${SOCKS_MODE:-2}"                   # 1=单端口多用户；2=多端口多用户
-SOCKS_PUBLIC_PORT="${SOCKS_PUBLIC_PORT:-$SOCKS_START_PORT}"
-SOCKS_START_PORT="${SOCKS_START_PORT:-${PORT:-30000}}"   # 起始端口（MODE=2 时会用到 port..port+count-1）
-SOCKS_HOST="${SOCKS_HOST:-}"                    # 不填就尝试自动探测；探测失败就输出 <YOUR_IP>
-SOCKS_DIR="${SOCKS_DIR:-/tmp/auto3proxy}"                 # 配置/导出保存目录（可挂载持久化）
-SOCKS_CONFIG_PATH="${SOCKS_CONFIG_PATH:-$SOCKS_DIR/3proxy.cfg}"
-SOCKS_EXPORT_PATH="${SOCKS_EXPORT_PATH:-$SOCKS_DIR/socks5_export.txt}"
-SOCKS_LOG="${SOCKS_LOG:-/dev/null}"             # 想看 3proxy 日志可设为 /dev/stdout
+CONFIG_FILE="/app/config/3proxy.cfg"
+USER_COUNT=5
 
-mkdir -p "$SOCKS_DIR"
+echo "========================================"
+echo "  🚀 3proxy SOCKS5 代理服务启动中..."
+echo "========================================"
 
-get_host() {
-  if [ -n "$SOCKS_HOST" ]; then return 0; fi
-  SOCKS_HOST="$(curl -s -4 ifconfig.me || true)"
-  [ -z "${SOCKS_HOST:-}" ] && SOCKS_HOST="$(curl -s -4 icanhazip.com || true)"
-  [ -z "${SOCKS_HOST:-}" ] && SOCKS_HOST="<YOUR_IP>"
-}
+#------------------------------------------------------------
+# 1. 智能端口选择逻辑
+#------------------------------------------------------------
+if [ -n "$PORT" ]; then
+    # Railway/ClawCloud 等平台会设置 PORT 环境变量
+    PROXY_PORT=$PORT
+    echo "✅ 检测到平台端口变量: $PROXY_PORT"
+else
+    # 自动生成随机端口 (30000-50000)
+    PROXY_PORT=$((30000 + RANDOM % 20001))
+    echo "🎲 自动生成随机端口: $PROXY_PORT"
+fi
 
-init_config() {
-  mkdir -p "$(dirname "$SOCKS_CONFIG_PATH")"
-  mkdir -p "$(dirname "$SOCKS_EXPORT_PATH")"
+#------------------------------------------------------------
+# 2. 自动生成多用户凭证
+#------------------------------------------------------------
+echo ""
+echo "🔐 正在生成 $USER_COUNT 组随机用户凭证..."
+USERS=()
 
-  cat > "$SOCKS_CONFIG_PATH" <<EOF
-nserver 8.8.8.8
+for i in $(seq 1 $USER_COUNT); do
+    # 生成随机用户名（8字符）和密码（16字符）
+    USERNAME=$(openssl rand -hex 4)
+    PASSWORD=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
+    USERS+=("$USERNAME:$PASSWORD")
+done
+
+#------------------------------------------------------------
+# 3. 动态生成 3proxy 配置文件
+#------------------------------------------------------------
+echo ""
+echo "📝 生成配置文件: $CONFIG_FILE"
+
+cat > "$CONFIG_FILE" <<EOF
+# 3proxy 配置文件 - 自动生成
+# 禁用 daemon 模式（前台运行）
+daemon
+
+# 日志输出到 stdout（利用 Docker logs）
+log /dev/stdout D
+logformat "- +_L%t.%.  %N.%p %E %U %C:%c %R:%r %O %I %h %T"
+
+# DNS 服务器
 nserver 1.1.1.1
+nserver 8.8.8.8
 nscache 65536
-timeouts 1 5 30 60 180 180 15 60
-maxconn 100
 
-# 容器里不要 daemon（保持前台运行，容器才不会退出）
-auth strong
-log $SOCKS_LOG
+# 设置超时时间
+timeouts 1 5 30 60 180 1800 15 60
+
+# 多用户认证
 EOF
-}
 
-rand_user() { echo "u$(tr -dc 'a-z0-9' </dev/urandom | head -c 6)"; }
-rand_pass() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 18; }
+# 添加所有用户
+for user in "${USERS[@]}"; do
+    echo "users $user" >> "$CONFIG_FILE"
+done
 
-generate() {
-  get_host
-  init_config
+cat >> "$CONFIG_FILE" <<EOF
 
-  echo "================ SOCKS5 list ================" > "$SOCKS_EXPORT_PATH"
-  echo ">>> Generating $SOCKS_COUNT node(s), mode=$SOCKS_MODE, start_port=$SOCKS_START_PORT"
+# 访问控制
+auth strong
 
-  if [ "$SOCKS_MODE" = "1" ]; then
-    # 单端口多用户：只需要在平台暴露一个端口
-    for ((i=0; i<SOCKS_COUNT; i++)); do
-      u="$(rand_user)"; p="$(rand_pass)"
-      echo "users $u:CL:$p" >> "$SOCKS_CONFIG_PATH"
-      echo "allow $u" >> "$SOCKS_CONFIG_PATH"
-      echo "$SOCKS_HOST:$SOCKS_START_PORT:$u:$p" >> "$SOCKS_EXPORT_PATH"
-    done
-    echo "socks -p$SOCKS_START_PORT -i0.0.0.0" >> "$SOCKS_CONFIG_PATH"
-    echo "flush" >> "$SOCKS_CONFIG_PATH"
-  else
-    # 多端口多用户：每个账号一个端口（更直观，但需要平台暴露多个端口）
-    for ((i=0; i<SOCKS_COUNT; i++)); do
-      port=$((SOCKS_START_PORT + i))
-      u="$(rand_user)"; p="$(rand_pass)"
-      echo "users $u:CL:$p" >> "$SOCKS_CONFIG_PATH"
-      echo "allow $u" >> "$SOCKS_CONFIG_PATH"
-      echo "socks -p$port -i0.0.0.0" >> "$SOCKS_CONFIG_PATH"
-      echo "flush" >> "$SOCKS_CONFIG_PATH"
-      echo "$SOCKS_HOST:$SOCKS_PUBLIC_PORT:$u:$p" >> "$SOCKS_EXPORT_PATH"
-    done
-  fi
+# 允许所有源 IP
+allow *
 
-  echo "========================================================"
-  echo "Generated SOCKS5 nodes (also saved to $SOCKS_EXPORT_PATH):"
-  cat "$SOCKS_EXPORT_PATH"
-  echo "========================================================"
-}
+# SOCKS5 代理监听
+socks -p$PROXY_PORT
+EOF
 
-main() {
-  generate
-  echo ">>> Starting 3proxy in foreground..."
-  exec "$BIN" "$SOCKS_CONFIG_PATH"
-}
+#------------------------------------------------------------
+# 4. 打印关键信息 Banner
+#------------------------------------------------------------
+echo ""
+echo "========================================"
+echo "  ✨ 3proxy 服务配置完成"
+echo "========================================"
+echo ""
+echo "📌 监听端口: $PROXY_PORT"
+echo ""
+echo "👥 用户列表:"
+for i in "${!USERS[@]}"; do
+    USER_INFO="${USERS[$i]}"
+    USERNAME="${USER_INFO%%:*}"
+    PASSWORD="${USER_INFO##*:}"
+    echo "   [$((i+1))] 用户名: $USERNAME | 密码: $PASSWORD"
+done
 
-main "$@"
+echo ""
+echo "🔗 连接串示例 (请替换 <服务器IP>):"
+FIRST_USER="${USERS[0]}"
+FIRST_USERNAME="${FIRST_USER%%:*}"
+FIRST_PASSWORD="${FIRST_USER##*:}"
+echo "   socks5://${FIRST_USERNAME}:${FIRST_PASSWORD}@<服务器IP>:${PROXY_PORT}"
+echo ""
+echo "========================================"
+echo "  🎯 服务正在启动..."
+echo "========================================"
+echo ""
+
+#------------------------------------------------------------
+# 5. 启动 3proxy（前台运行）
+#------------------------------------------------------------
+exec /app/bin/3proxy "$CONFIG_FILE"
