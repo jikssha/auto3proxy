@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+exec 2>&1
+trap 'echo "ERROR: exit at line $LINENO"; exit 1' ERR
+
 BIN="${BIN:-/usr/local/bin/3proxy}"
 
 # ==== 可在容器后台用环境变量改 ====
 SOCKS_COUNT="${SOCKS_COUNT:-5}"                 # 默认 5 个节点/账号
 SOCKS_MODE="${SOCKS_MODE:-2}"                   # 1=单端口多用户；2=多端口多用户
+SOCKS_PUBLIC_PORT="${SOCKS_PUBLIC_PORT:-$SOCKS_START_PORT}"
 SOCKS_START_PORT="${SOCKS_START_PORT:-${PORT:-30000}}"   # 起始端口（MODE=2 时会用到 port..port+count-1）
 SOCKS_HOST="${SOCKS_HOST:-}"                    # 不填就尝试自动探测；探测失败就输出 <YOUR_IP>
 SOCKS_DIR="${SOCKS_DIR:-/tmp/auto3proxy}"                 # 配置/导出保存目录（可挂载持久化）
@@ -68,7 +72,7 @@ generate() {
       echo "allow $u" >> "$SOCKS_CONFIG_PATH"
       echo "socks -p$port -i0.0.0.0" >> "$SOCKS_CONFIG_PATH"
       echo "flush" >> "$SOCKS_CONFIG_PATH"
-      echo "$SOCKS_HOST:$port:$u:$p" >> "$SOCKS_EXPORT_PATH"
+      echo "$SOCKS_HOST:$SOCKS_PUBLIC_PORT:$u:$p" >> "$SOCKS_EXPORT_PATH"
     done
   fi
 
