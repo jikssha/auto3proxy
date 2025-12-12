@@ -6,11 +6,11 @@ BIN="${BIN:-/usr/local/bin/3proxy}"
 # ==== 可在容器后台用环境变量改 ====
 SOCKS_COUNT="${SOCKS_COUNT:-5}"                 # 默认 5 个节点/账号
 SOCKS_MODE="${SOCKS_MODE:-2}"                   # 1=单端口多用户；2=多端口多用户
-SOCKS_START_PORT="${SOCKS_START_PORT:-30000}"   # 起始端口（MODE=2 时会用到 port..port+count-1）
+SOCKS_START_PORT="${SOCKS_START_PORT:-${PORT:-30000}}"   # 起始端口（MODE=2 时会用到 port..port+count-1）
 SOCKS_HOST="${SOCKS_HOST:-}"                    # 不填就尝试自动探测；探测失败就输出 <YOUR_IP>
-SOCKS_DIR="${SOCKS_DIR:-/data}"                 # 配置/导出保存目录（可挂载持久化）
-SOCKS_CONFIG_PATH="${SOCKS_CONFIG_PATH:-$SOCKS_DIR/3proxy.cfg}"
-SOCKS_EXPORT_PATH="${SOCKS_EXPORT_PATH:-$SOCKS_DIR/socks5_export.txt}"
+SOCKS_DIR="${SOCKS_DIR:-/tmp/auto3proxy}"                 # 配置/导出保存目录（可挂载持久化）
+SOCKS_CONFIG_PATH=SOCKS_CONFIG_PATH="${SOCKS_CONFIG_PATH:-$SOCKS_DIR/3proxy.cfg}"
+SOCKS_EXPORT_PATH=SOCKS_EXPORT_PATH="${SOCKS_EXPORT_PATH:-$SOCKS_DIR/socks5_export.txt}"
 SOCKS_LOG="${SOCKS_LOG:-/dev/null}"             # 想看 3proxy 日志可设为 /dev/stdout
 
 mkdir -p "$SOCKS_DIR"
