@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash curl ca-certificates tini && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/bin/3proxy /usr/local/bin/3proxy
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh && mkdir -p /data
+RUN chmod +x /entrypoint.sh && mkdir -p /data && chmod 1777 /data
 
 ENV BIN=/usr/local/bin/3proxy
 ENTRYPOINT ["/usr/bin/tini","--","/entrypoint.sh"]
