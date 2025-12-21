@@ -86,20 +86,23 @@ generate_nodes() {
         local real_port=$((start_port + i))
         [ "$mode" == "1" ] && real_port=$start_port
 
-        # 核心修复：每个端口段前必须重申 auth strong，并清除之前的 allow
+        # 核心修复：确保认证配置在服务定义之前生效
         echo "users $user:CL:$pass" >> $CONF_FILE
-        echo "auth strong" >> $CONF_FILE
-        echo "allow $user" >> $CONF_FILE
         
         if [ "$protocol" == "http" ]; then
-            # HTTP/HTTPS 代理 (使用基本认证)
+            # HTTP/HTTPS 代理配置块
+            echo "auth strong" >> $CONF_FILE
+            echo "allow $user" >> $CONF_FILE
             echo "proxy -p$real_port" >> $CONF_FILE
+            echo "" >> $CONF_FILE  # 空行分隔配置块
         else
-            # SOCKS5 代理 (禁用主机名解析提升性能)
+            # SOCKS5 代理配置块
+            echo "auth strong" >> $CONF_FILE
+            echo "allow $user" >> $CONF_FILE
             echo "socks -n -p$real_port" >> $CONF_FILE
+            echo "" >> $CONF_FILE  # 空行分隔配置块
         fi
         
-        echo "flush" >> $CONF_FILE
         echo "$PUB_IP:$real_port:$user:$pass" >> $EXPORT_FILE
     done
 
@@ -210,8 +213,9 @@ action_delete_single() {
     # 备份配置文件
     cp "$CONF_FILE" "${CONF_FILE}.bak"
     
-    # 从配置文件删除（匹配用户名对应的配置块）
-    sed -i "/users $target_user:/,/flush/d" "$CONF_FILE"
+    # 从配置文件删除（匹配用户名对应的配置块：users -> auth -> allow -> proxy/socks -> 空行）
+    # 使用更精确的匹配：删除从users行开始，到下一个空行为止的配置块
+    sed -i "/users $target_user:/,/^$/d" "$CONF_FILE"
     
     # 从导出文件删除
     sed -i "${num}d" "$EXPORT_FILE"
