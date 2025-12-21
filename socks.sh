@@ -12,14 +12,21 @@ PATH_CONF="/etc/3proxy"
 CONF_FILE="/etc/3proxy/3proxy.cfg"
 EXPORT_FILE="/root/proxies_export.txt"  # 修改了文件名以体现通用性
 
-# --- 1. 自我修复与快捷键安装 ---
+# --- 1. 自我修复与快捷键安装 (修复版) ---
 install_self() {
+    # 只有当脚本不是通过快捷指令运行时，才执行安装/更新
     if [ "$0" != "$SHORTCUT_PATH" ]; then
         echo ">>> 检测到首次运行，正在安装快捷指令 'socks'..."
-        # 注意：如果你有自己的仓库，请更新上面的 REPO_URL，否则这里会覆盖回旧版
-        cp "$0" "$SHORTCUT_PATH"
-        chmod +x "$SHORTCUT_PATH"
-        echo ">>> 快捷指令安装成功！以后输入 'socks' 即可呼出菜单。"
+        
+        # 修复点：必须使用 curl 重新下载，不能使用 cp "$0"
+        # 这里的 REPO_URL 必须是你 GitHub 的真实 Raw 地址
+        if curl -fsSL "$REPO_URL" | tr -d '\r' > "$SHORTCUT_PATH"; then
+            chmod +x "$SHORTCUT_PATH"
+            echo ">>> 快捷指令安装成功！以后输入 'socks' 即可呼出菜单。"
+        else
+            echo "Error: 下载脚本失败，请检查 REPO_URL 地址是否正确。"
+            exit 1
+        fi
     fi
 }
 
@@ -302,3 +309,4 @@ check_root
 install_self
 install_dependencies
 show_menu
+
