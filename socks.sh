@@ -1,7 +1,7 @@
 #!/bin/bash
 # =========================================================
-# 3Proxy Manager Pro (v2.1 Final)
-# 支持 SOCKS5 / HTTP 协议，修复 GCP/Oracle 环境下的认证与启动问题
+# 3Proxy SOCKS5 Manager (Lite)
+# 仅支持 SOCKS5 协议，支持 无认证/密码认证 模式
 # =========================================================
 
 # --- 核心配置 ---
@@ -72,38 +72,38 @@ reload_process() {
 }
 
 generate_nodes() {
-    local count=$1; local start_port=$2; local mode=$3; local append=$4; local protocol=$5
+    local count=$1; local start_port=$2; local mode=$3; local append=$4; local auth_type=$5
     get_public_ip
     
-    [ "$append" == "false" ] && echo "--- $protocol Proxy List ---" > $EXPORT_FILE
+    [ "$append" == "false" ] && echo "--- SOCKS5 Proxy List ---" > $EXPORT_FILE
     [ -f "$CONF_FILE" ] || init_config_header
 
-    echo ">>> 正在写入配置 (协议: $protocol)..."
+    echo ">>> 正在写入配置 (模式: $auth_type)..."
     local i
     for ((i=0; i<count; i++)); do
-        local user="u$(tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
-        local pass="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12)"
         local real_port=$((start_port + i))
         [ "$mode" == "1" ] && real_port=$start_port
 
-        # 核心修复：确保认证配置在服务定义之前生效
-        echo "users $user:CL:$pass" >> $CONF_FILE
-        
-        if [ "$protocol" == "http" ]; then
-            # HTTP/HTTPS 代理配置块
-            echo "auth strong" >> $CONF_FILE
-            echo "allow $user" >> $CONF_FILE
-            echo "proxy -p$real_port" >> $CONF_FILE
-            echo "" >> $CONF_FILE  # 空行分隔配置块
+        if [ "$auth_type" == "noauth" ]; then
+            # 无认证模式
+            echo "auth none" >> $CONF_FILE
+            echo "socks -n -p$real_port" >> $CONF_FILE
+            echo "" >> $CONF_FILE
+            
+            echo "$PUB_IP:$real_port" >> $EXPORT_FILE
         else
-            # SOCKS5 代理配置块
+            # 强认证模式 (默认)
+            local user="u$(tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
+            local pass="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12)"
+            
+            echo "users $user:CL:$pass" >> $CONF_FILE
             echo "auth strong" >> $CONF_FILE
             echo "allow $user" >> $CONF_FILE
             echo "socks -n -p$real_port" >> $CONF_FILE
-            echo "" >> $CONF_FILE  # 空行分隔配置块
+            echo "" >> $CONF_FILE
+            
+            echo "$PUB_IP:$real_port:$user:$pass" >> $EXPORT_FILE
         fi
-        
-        echo "$PUB_IP:$real_port:$user:$pass" >> $EXPORT_FILE
     done
 
     # 批量开放防火墙 (针对 VPS 内部)
@@ -119,13 +119,13 @@ generate_nodes() {
 }
 
 # --- 4. 交互菜单 ---
-select_protocol_ui() {
+select_auth_ui() {
     echo "------------------------------------------------"
-    echo "请选择代理协议:"
-    echo " [1] SOCKS5 (更稳定，推荐)"
-    echo " [2] HTTP/HTTPS (适合浏览器环境)"
-    read -p "选择 [1-2]: " p_choice
-    [ "$p_choice" == "2" ] && PROTO_TYPE="http" || PROTO_TYPE="socks"
+    echo "请选择认证模式:"
+    echo " [1] 账号密码认证 (默认，推荐)"
+    echo " [2] 无认证模式 (仅IP白名单，慎用)"
+    read -p "选择 [1-2]: " a_choice
+    [ "$a_choice" == "2" ] && AUTH_TYPE="noauth" || AUTH_TYPE="auth"
 }
 
 # --- 4.1 智能节点创建/追加 ---
@@ -151,7 +151,7 @@ action_create_or_append() {
     read -p "节点数量: " count
     [ -z "$count" ] || [ "$count" -le 0 ] && { echo "数量无效"; read -p "回车继续..."; action_create_or_append; return; }
     
-    select_protocol_ui
+    select_auth_ui
     
     # 获取起始端口
     local last_port=$(grep -E "(socks|proxy) -p" $CONF_FILE 2>/dev/null | grep -oP 'p\K[0-9]+' | sort -nr | head -n1)
@@ -171,7 +171,7 @@ action_create_or_append() {
         fi
     fi
     
-    generate_nodes "$count" "$start_port" "${port_reuse:-2}" "true" "$PROTO_TYPE"
+    generate_nodes "$count" "$start_port" "${port_reuse:-2}" "true" "$AUTH_TYPE"
     read -p "回车继续..."
     submenu_node_manage
 }
@@ -250,35 +250,9 @@ action_view_list() {
     fi
     
     echo "========================================================"
-    echo "   节点列表 (按协议分组)"
+    echo "   SOCKS5 节点列表"
     echo "========================================================"
-    
-    # SOCKS5 节点
-    echo ""
-    echo "【SOCKS5 节点】"
-    echo "------------------------------------------------"
-    local has_socks=false
-    grep -E "socks -" "$CONF_FILE" 2>/dev/null | while read line; do
-        local port=$(echo "$line" | grep -oP 'p\K[0-9]+')
-        if [ -n "$port" ]; then
-            grep ":$port:" "$EXPORT_FILE" 2>/dev/null && has_socks=true
-        fi
-    done
-    $has_socks || echo "(无)"
-    
-    # HTTP 节点
-    echo ""
-    echo "【HTTP 节点】"
-    echo "------------------------------------------------"
-    local has_http=false
-    grep -E "proxy -" "$CONF_FILE" 2>/dev/null | while read line; do
-        local port=$(echo "$line" | grep -oP 'p\K[0-9]+')
-        if [ -n "$port" ]; then
-            grep ":$port:" "$EXPORT_FILE" 2>/dev/null && has_http=true
-        fi
-    done
-    $has_http || echo "(无)"
-    
+    cat $EXPORT_FILE
     echo "========================================================"
 }
 
@@ -356,7 +330,7 @@ submenu_reset() {
 show_menu() {
     clear
     echo "========================================================"
-    echo "   3Proxy Manager Pro (增强版)"
+    echo "   3Proxy SOCKS5 Manager (纯净版)"
     echo "========================================================"
     echo " 1. 📦 节点管理"
     echo " 2. 🔄 重置节点"
